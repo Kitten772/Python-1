@@ -277,7 +277,7 @@ document.addEventListener('keydown', e => {
         for (let i = 0; i < 10; i++) spawnBall();
 
         // Clear the trails canvas
-        trailCtx.fillStyle = '#111';
+        trailCtx.fillStyle = 'rgba(17,17,17,1)';
         trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
     }
 });
@@ -557,17 +557,8 @@ function handleCollisions() {
     }
     balls.push(...newBalls);
 
-    // Cull - keep ball count manageable
-    if (balls.length > 18000) {
-        // Keep only the 3000 fastest balls (they have momentum)
-        balls.sort((a, b) => {
-            let speedA = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-            let speedB = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-            return speedB - speedA;
-        });
-        balls.length = 3000;
-        console.log('Mass cull: reduced to 3000 fastest balls');
-    } else if (balls.length > 50) {
+    // Cull
+    if (balls.length > 50) {
         let cullCount = Math.min(5, balls.length - 40);
         for (let i = 0; i < cullCount; i++) {
             let idx = Math.floor(Math.random() * balls.length);
@@ -612,34 +603,28 @@ canvas.style.zIndex = '5'; // Balls ON TOP
 
 // Render function
 function render() {
-    // Trails layer (BEHIND) - only fade if trails are enabled
-    if (trailsEnabled) {
-        trailCtx.fillStyle = 'rgba(17,17,17,0.1)';
-        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+    // Trails layer (BEHIND) - fade old trails
+    trailCtx.fillStyle = 'rgba(17,17,17,0.1)';
+    trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
 
-        if (balls.length < 25) {
-            for (let b of balls) {
-                if (b.r <= 15) continue;
-                let color = b.getColor();
-                trailCtx.strokeStyle = `rgb(${color[0]*255},${color[1]*255},${color[2]*255})`;
-                trailCtx.lineWidth = 2;
-                trailCtx.beginPath();
-                let head = b.trailHead;
-                for (let i = 0; i < 9; i++) {
-                    let idx1 = (head - i + 10) % 10;
-                    let idx2 = (head - i - 1 + 10) % 10;
-                    let pos1 = b.trail[idx1];
-                    let pos2 = b.trail[idx2];
-                    if (i === 0) trailCtx.moveTo(pos1.x, pos1.y);
-                    trailCtx.lineTo(pos2.x, pos2.y);
-                }
-                trailCtx.stroke();
+    if (trailsEnabled && balls.length < 25) {
+        for (let b of balls) {
+            if (b.r <= 15) continue;
+            let color = b.getColor();
+            trailCtx.strokeStyle = `rgb(${color[0]*255},${color[1]*255},${color[2]*255})`;
+            trailCtx.lineWidth = 2;
+            trailCtx.beginPath();
+            let head = b.trailHead;
+            for (let i = 0; i < 9; i++) {
+                let idx1 = (head - i + 10) % 10;
+                let idx2 = (head - i - 1 + 10) % 10;
+                let pos1 = b.trail[idx1];
+                let pos2 = b.trail[idx2];
+                if (i === 0) trailCtx.moveTo(pos1.x, pos1.y);
+                trailCtx.lineTo(pos2.x, pos2.y);
             }
+            trailCtx.stroke();
         }
-    } else {
-        // Clear trails when disabled
-        trailCtx.fillStyle = '#111';
-        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
     }
 
     // Balls layer (ON TOP) - clear and redraw completely fresh, with transparent background
@@ -659,23 +644,17 @@ function render() {
     }
 }
 
-// Animation loop - simpler approach for consistent 60 FPS
+// Animation loop with fixed timestep for consistent 60 FPS physics
 let lastTime = 0;
 let frameCount = 0;
 let fpsAccumulator = 0;
+const TARGET_FPS = 60;
+const FRAME_TIME = 1000 / TARGET_FPS;
+let accumulator = 0;
 
 function animate(time = 0) {
-    requestAnimationFrame(animate);
-
     if (!lastTime) lastTime = time;
     let delta = time - lastTime;
-
-    // Skip frame if delta is too large (tab was inactive)
-    if (delta > 100) {
-        lastTime = time;
-        return;
-    }
-
     lastTime = time;
 
     // FPS counter
@@ -689,15 +668,26 @@ function animate(time = 0) {
         fpsAccumulator = 0;
     }
 
-    // Physics and movement
-    handleCollisions();
+    // Fixed timestep physics
+    accumulator += delta;
 
-    for (let b of balls) {
-        b.move();
+    // Cap accumulator to prevent spiral of death
+    if (accumulator > 250) accumulator = 250;
+
+    while (accumulator >= FRAME_TIME) {
+        handleCollisions();
+
+        for (let b of balls) {
+            b.move();
+        }
+
+        accumulator -= FRAME_TIME;
     }
 
-    // Render
+    // Always render at display refresh rate
     render();
+
+    requestAnimationFrame(animate);
 }
 
 window.addEventListener('resize', () => {
