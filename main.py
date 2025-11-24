@@ -8,16 +8,25 @@ HTML = """
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Chaotic Physics Sandbox WebGL</title>
+<title>Balls Animation (WEBGL Physics simulator</title>
 <style>
 body { margin:0; overflow:hidden; background:#111; touch-action:none; }
 canvas { display:block; }
-#info { position:absolute; top:10px; left:10px; color:#fff; font-family:monospace; font-size:12px; z-index:10; }
+#info { 
+    position:absolute; top:10px; left:10px; 
+    color:#fff; font-family:monospace; font-size:12px; 
+    z-index:10; background:rgba(0,0,0,0.5); 
+    padding:8px; border-radius:4px;
+}
+#info span { color:#0f0; }
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
-<div id="info">G: gravity | T: trails | Balls: <span id="ballCount">10</span> | FPS: <span id="fps">60</span></div>
+<div id="info">
+    <div>G: gravity | T: trails | R: reset | M: mute</div>
+    <div>Balls: <span id="ballCount">10</span> | FPS: <span id="fps">60</span></div>
+</div>
 <script>
 const canvas = document.getElementById("canvas");
 const gl = canvas.getContext("webgl", { alpha: true, antialias: true, preserveDrawingBuffer: false });
@@ -133,6 +142,8 @@ gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
 let audioCtx = null;
 let osc = null;
 let gainNode = null;
+let audioMuted = false;
+
 function initAudio() {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -144,7 +155,9 @@ function initAudio() {
         osc.type = 'sine';
     }
 }
+
 function playTone(frequency, duration=0.1, type='sine', volume=0.1) {
+    if (audioMuted) return;
     try {
         initAudio();
         osc.type = type;
@@ -268,9 +281,18 @@ let trailsEnabled = true;
 let physicsTick = 0;
 
 document.addEventListener('keydown', e => {
-    if (e.key === 'g' || e.key === 'G') gravityWell.active = !gravityWell.active;
-    if (e.key === 't' || e.key === 'T') trailsEnabled = !trailsEnabled;
-
+    if (e.key === 'g' || e.key === 'G') {
+        gravityWell.active = !gravityWell.active;
+        console.log('Gravity well:', gravityWell.active ? 'ON' : 'OFF');
+    }
+    if (e.key === 't' || e.key === 'T') {
+        trailsEnabled = !trailsEnabled;
+        console.log('Trails:', trailsEnabled ? 'ON' : 'OFF');
+    }
+    if (e.key === 'm' || e.key === 'M') {
+        audioMuted = !audioMuted;
+        console.log('Audio:', audioMuted ? 'MUTED' : 'ON');
+    }
     if (e.key === 'r' || e.key === 'R') {
         // Reset all balls and trails
         balls = [];
@@ -279,6 +301,15 @@ document.addEventListener('keydown', e => {
         // Clear the trails canvas
         trailCtx.fillStyle = '#111';
         trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+        console.log('Reset to 10 balls');
+    }
+    // Spawn 10 more balls with SPACE
+    if (e.key === ' ') {
+        e.preventDefault();
+        for (let i = 0; i < 10; i++) {
+            spawnBall(Math.random() * canvas.width, Math.random() * canvas.height);
+        }
+        console.log('Spawned 10 more balls');
     }
 });
 
