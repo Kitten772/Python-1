@@ -8,16 +8,25 @@ HTML = """
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Chaotic Physics Sandbox WebGL</title>
+<title>Balls Animation (WEBGL Physics simulator</title>
 <style>
 body { margin:0; overflow:hidden; background:#111; touch-action:none; }
 canvas { display:block; }
-#info { position:absolute; top:10px; left:10px; color:#fff; font-family:monospace; font-size:12px; z-index:10; }
+#info { 
+    position:absolute; top:10px; left:10px; 
+    color:#fff; font-family:monospace; font-size:12px; 
+    z-index:10; background:rgba(0,0,0,0.5); 
+    padding:8px; border-radius:4px;
+}
+#info span { color:#0f0; }
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
-<div id="info">G: gravity | T: trails | Balls: <span id="ballCount">10</span> | FPS: <span id="fps">60</span></div>
+<div id="info">
+    <div>G: gravity | T: trails | R: reset | M: mute</div>
+    <div>Balls: <span id="ballCount">10</span> | FPS: <span id="fps">60</span></div>
+</div>
 <script>
 const canvas = document.getElementById("canvas");
 const gl = canvas.getContext("webgl", { alpha: true, antialias: true, preserveDrawingBuffer: false });
@@ -133,6 +142,8 @@ gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
 let audioCtx = null;
 let osc = null;
 let gainNode = null;
+let audioMuted = false;
+
 function initAudio() {
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -144,7 +155,9 @@ function initAudio() {
         osc.type = 'sine';
     }
 }
+
 function playTone(frequency, duration=0.1, type='sine', volume=0.1) {
+    if (audioMuted) return;
     try {
         initAudio();
         osc.type = type;
@@ -268,17 +281,35 @@ let trailsEnabled = true;
 let physicsTick = 0;
 
 document.addEventListener('keydown', e => {
-    if (e.key === 'g' || e.key === 'G') gravityWell.active = !gravityWell.active;
-    if (e.key === 't' || e.key === 'T') trailsEnabled = !trailsEnabled;
-
+    if (e.key === 'g' || e.key === 'G') {
+        gravityWell.active = !gravityWell.active;
+        console.log('Gravity well:', gravityWell.active ? 'ON' : 'OFF');
+    }
+    if (e.key === 't' || e.key === 'T') {
+        trailsEnabled = !trailsEnabled;
+        console.log('Trails:', trailsEnabled ? 'ON' : 'OFF');
+    }
+    if (e.key === 'm' || e.key === 'M') {
+        audioMuted = !audioMuted;
+        console.log('Audio:', audioMuted ? 'MUTED' : 'ON');
+    }
     if (e.key === 'r' || e.key === 'R') {
         // Reset all balls and trails
         balls = [];
         for (let i = 0; i < 10; i++) spawnBall();
 
         // Clear the trails canvas
-        trailCtx.fillStyle = 'rgba(17,17,17,1)';
+        trailCtx.fillStyle = '#111';
         trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+        console.log('Reset to 10 balls');
+    }
+    // Spawn 10 more balls with SPACE
+    if (e.key === ' ') {
+        e.preventDefault();
+        for (let i = 0; i < 10; i++) {
+            spawnBall(Math.random() * canvas.width, Math.random() * canvas.height);
+        }
+        console.log('Spawned 10 more balls');
     }
 });
 
@@ -557,8 +588,17 @@ function handleCollisions() {
     }
     balls.push(...newBalls);
 
-    // Cull
-    if (balls.length > 50) {
+    // Cull - keep ball count manageable
+    if (balls.length > 18000) {
+        // Keep only the 3000 fastest balls (they have momentum)
+        balls.sort((a, b) => {
+            let speedA = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+            let speedB = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+            return speedB - speedA;
+        });
+        balls.length = 3000;
+        console.log('Mass cull: reduced to 3000 fastest balls');
+    } else if (balls.length > 50) {
         let cullCount = Math.min(5, balls.length - 40);
         for (let i = 0; i < cullCount; i++) {
             let idx = Math.floor(Math.random() * balls.length);
@@ -603,28 +643,34 @@ canvas.style.zIndex = '5'; // Balls ON TOP
 
 // Render function
 function render() {
-    // Trails layer (BEHIND) - fade old trails
-    trailCtx.fillStyle = 'rgba(17,17,17,0.1)';
-    trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+    // Trails layer (BEHIND) - only fade if trails are enabled
+    if (trailsEnabled) {
+        trailCtx.fillStyle = 'rgba(17,17,17,0.1)';
+        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
 
-    if (trailsEnabled && balls.length < 25) {
-        for (let b of balls) {
-            if (b.r <= 15) continue;
-            let color = b.getColor();
-            trailCtx.strokeStyle = `rgb(${color[0]*255},${color[1]*255},${color[2]*255})`;
-            trailCtx.lineWidth = 2;
-            trailCtx.beginPath();
-            let head = b.trailHead;
-            for (let i = 0; i < 9; i++) {
-                let idx1 = (head - i + 10) % 10;
-                let idx2 = (head - i - 1 + 10) % 10;
-                let pos1 = b.trail[idx1];
-                let pos2 = b.trail[idx2];
-                if (i === 0) trailCtx.moveTo(pos1.x, pos1.y);
-                trailCtx.lineTo(pos2.x, pos2.y);
+        if (balls.length < 25) {
+            for (let b of balls) {
+                if (b.r <= 15) continue;
+                let color = b.getColor();
+                trailCtx.strokeStyle = `rgb(${color[0]*255},${color[1]*255},${color[2]*255})`;
+                trailCtx.lineWidth = 2;
+                trailCtx.beginPath();
+                let head = b.trailHead;
+                for (let i = 0; i < 9; i++) {
+                    let idx1 = (head - i + 10) % 10;
+                    let idx2 = (head - i - 1 + 10) % 10;
+                    let pos1 = b.trail[idx1];
+                    let pos2 = b.trail[idx2];
+                    if (i === 0) trailCtx.moveTo(pos1.x, pos1.y);
+                    trailCtx.lineTo(pos2.x, pos2.y);
+                }
+                trailCtx.stroke();
             }
-            trailCtx.stroke();
         }
+    } else {
+        // Clear trails when disabled
+        trailCtx.fillStyle = '#111';
+        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
     }
 
     // Balls layer (ON TOP) - clear and redraw completely fresh, with transparent background
@@ -644,17 +690,23 @@ function render() {
     }
 }
 
-// Animation loop with fixed timestep for consistent 60 FPS physics
+// Animation loop - simpler approach for consistent 60 FPS
 let lastTime = 0;
 let frameCount = 0;
 let fpsAccumulator = 0;
-const TARGET_FPS = 60;
-const FRAME_TIME = 1000 / TARGET_FPS;
-let accumulator = 0;
 
 function animate(time = 0) {
+    requestAnimationFrame(animate);
+
     if (!lastTime) lastTime = time;
     let delta = time - lastTime;
+
+    // Skip frame if delta is too large (tab was inactive)
+    if (delta > 100) {
+        lastTime = time;
+        return;
+    }
+
     lastTime = time;
 
     // FPS counter
@@ -668,26 +720,15 @@ function animate(time = 0) {
         fpsAccumulator = 0;
     }
 
-    // Fixed timestep physics
-    accumulator += delta;
+    // Physics and movement
+    handleCollisions();
 
-    // Cap accumulator to prevent spiral of death
-    if (accumulator > 250) accumulator = 250;
-
-    while (accumulator >= FRAME_TIME) {
-        handleCollisions();
-
-        for (let b of balls) {
-            b.move();
-        }
-
-        accumulator -= FRAME_TIME;
+    for (let b of balls) {
+        b.move();
     }
 
-    // Always render at display refresh rate
+    // Render
     render();
-
-    requestAnimationFrame(animate);
 }
 
 window.addEventListener('resize', () => {

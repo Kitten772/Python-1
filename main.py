@@ -252,9 +252,13 @@ function updateGrid() {
     }
 }
 
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
 function getCell(x, y) {
-    const col = Math.floor((x / cellSize + GRID_SIZE) % GRID_SIZE);
-    const row = Math.floor((y / cellSize + GRID_SIZE) % GRID_SIZE);
+    const col = Math.floor(mod(x / cellSize, GRID_SIZE));
+    const row = Math.floor(mod(y / cellSize, GRID_SIZE));
     return row * GRID_SIZE + col;
 }
 
