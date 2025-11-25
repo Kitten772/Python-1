@@ -198,8 +198,8 @@ class Ball {
         if (this.y + this.r > canvas.height) { this.y = canvas.height - this.r; this.vy = -Math.abs(this.vy) * 1.2; bounced = true; }
 
         if (bounced) {
-            this.vx *= 1.03;
-            this.vy *= 1.03;
+            this.vx *= 0.95;
+            this.vy *= 0.95;
         }
 
         let speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);

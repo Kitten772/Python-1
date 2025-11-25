@@ -252,9 +252,13 @@ function updateGrid() {
     }
 }
 
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
 function getCell(x, y) {
-    const col = Math.floor((x / cellSize + GRID_SIZE) % GRID_SIZE);
-    const row = Math.floor((y / cellSize + GRID_SIZE) % GRID_SIZE);
+    const col = Math.floor(mod(x / cellSize, GRID_SIZE));
+    const row = Math.floor(mod(y / cellSize, GRID_SIZE));
     return row * GRID_SIZE + col;
 }
 
@@ -589,7 +593,7 @@ function handleCollisions() {
     balls.push(...newBalls);
 
     // Cull - keep ball count manageable
-    if (balls.length > 18000) {
+    if (balls.length > 30000) {
         // Keep only the 3000 fastest balls (they have momentum)
         balls.sort((a, b) => {
             let speedA = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
