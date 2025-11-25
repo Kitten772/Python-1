@@ -198,8 +198,8 @@ class Ball {
         if (this.y + this.r > canvas.height) { this.y = canvas.height - this.r; this.vy = -Math.abs(this.vy) * 1.2; bounced = true; }
 
         if (bounced) {
-            this.vx *= 0.95;
-            this.vy *= 0.95;
+            this.vx *= 0.8;
+            this.vy *= 0.8;
         }
 
         let speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
@@ -751,9 +751,11 @@ animate();
 </html>
 """
 
+
 @app.route('/')
 def index():
     return render_template_string(HTML)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
