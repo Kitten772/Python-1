@@ -8,7 +8,7 @@ HTML = """
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Balls Animation (WEBGL Physics simulator</title>
+<title>Balls Animation (WEBGL2 Physics simulator)</title>
 <style>
 body { margin:0; overflow:hidden; background:#111; touch-action:none; }
 canvas { display:block; }
@@ -24,49 +24,57 @@ canvas { display:block; }
 <body>
 <canvas id="canvas"></canvas>
 <div id="info">
-    <div>G: gravity | T: trails | R: reset | M: mute</div>
+    <div>G: gravity | T: trails | R: reset | M: mute | SPACE: +100 balls</div>
     <div>Balls: <span id="ballCount">10</span> | FPS: <span id="fps">60</span></div>
 </div>
 <script>
 const canvas = document.getElementById("canvas");
-const gl = canvas.getContext("webgl", { alpha: true, antialias: true, preserveDrawingBuffer: false });
+const gl = canvas.getContext("webgl2", { 
+    alpha: false, 
+    antialias: false, 
+    powerPreference: "high-performance"
+});
+
+if (!gl) {
+    alert("WebGL 2 not supported! Please use a modern browser.");
+    throw new Error("WebGL 2 not supported");
+}
+
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-if (!gl) {
-    alert("WebGL not supported!");
-    throw new Error("WebGL not supported");
-}
+// WebGL 2 instanced rendering shaders
+const vertexShaderSource = `#version 300 es
+    in vec2 a_position;
+    in vec3 a_instance;
+    in vec3 a_color;
 
-// Simple vertex shader for circles
-const vertexShaderSource = `
-    attribute vec2 a_position;
     uniform vec2 u_resolution;
-    uniform vec2 u_center;
-    uniform float u_radius;
-    varying vec2 v_texCoord;
+
+    out vec3 v_color;
+    out vec2 v_texCoord;
 
     void main() {
-        vec2 position = u_center + a_position * u_radius;
+        vec2 position = a_instance.xy + a_position * a_instance.z;
         vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;
         gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
         v_texCoord = a_position;
+        v_color = a_color;
     }
 `;
 
-// Fragment shader for circles
-const fragmentShaderSource = `
+const fragmentShaderSource = `#version 300 es
     precision mediump float;
-    uniform vec3 u_color;
-    varying vec2 v_texCoord;
+
+    in vec3 v_color;
+    in vec2 v_texCoord;
+
+    out vec4 fragColor;
 
     void main() {
         float dist = length(v_texCoord);
-        if (dist > 1.0) {
-            discard;
-        }
-        float alpha = smoothstep(1.0, 0.9, dist);
-        gl_FragColor = vec4(u_color, alpha);
+        if (dist > 1.0) discard;
+        fragColor = vec4(v_color, 1.0);
     }
 `;
 
@@ -95,136 +103,135 @@ function createProgram(gl, vertexShader, fragmentShader) {
     return program;
 }
 
-// Create program
 const vertShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
 const fragShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
 const program = createProgram(gl, vertShader, fragShader);
 
-if (!program) {
-    alert("Failed to create WebGL program!");
-    throw new Error("Program creation failed");
-}
-
-// Get locations
 const positionLoc = gl.getAttribLocation(program, "a_position");
+const instanceLoc = gl.getAttribLocation(program, "a_instance");
+const colorLoc = gl.getAttribLocation(program, "a_color");
 const resolutionLoc = gl.getUniformLocation(program, "u_resolution");
-const centerLoc = gl.getUniformLocation(program, "u_center");
-const radiusLoc = gl.getUniformLocation(program, "u_radius");
-const colorLoc = gl.getUniformLocation(program, "u_color");
 
-// Create quad buffer
+// Create VAO
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+// Quad positions
 const quadPositions = new Float32Array([
-    -1, -1,
-     1, -1,
-    -1,  1,
-    -1,  1,
-     1, -1,
-     1,  1,
+    -1, -1,  1, -1,  -1, 1,
+    -1, 1,   1, -1,   1, 1,
 ]);
 
 const positionBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, quadPositions, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(positionLoc);
+gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
 
-// Setup WebGL state
-gl.enable(gl.BLEND);
-gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+// Instance buffers - larger capacity
+const MAX_BALLS = 200000;
+const instanceBuffer = gl.createBuffer();
+const colorBuffer = gl.createBuffer();
+
+gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, MAX_BALLS * 3 * 4, gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(instanceLoc);
+gl.vertexAttribPointer(instanceLoc, 3, gl.FLOAT, false, 0, 0);
+gl.vertexAttribDivisor(instanceLoc, 1);
+
+gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, MAX_BALLS * 3 * 4, gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(colorLoc);
+gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
+gl.vertexAttribDivisor(colorLoc, 1);
+
+gl.bindVertexArray(null);
+
+gl.useProgram(program);
+gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
 gl.viewport(0, 0, canvas.width, canvas.height);
 
-// Use program and setup position attribute
-gl.useProgram(program);
-gl.enableVertexAttribArray(positionLoc);
-gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
-
-// Audio setup
+// Audio
 let audioCtx = null;
-let osc = null;
-let gainNode = null;
 let audioMuted = false;
 
-function initAudio() {
-    if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        osc = audioCtx.createOscillator();
-        gainNode = audioCtx.createGain();
-        osc.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        osc.start();
-        osc.type = 'sine';
-    }
-}
-
-function playTone(frequency, duration=0.1, type='sine', volume=0.1) {
-    if (audioMuted) return;
+function playTone(frequency, duration=0.05, volume=0.03) {
+    if (audioMuted || !audioCtx) return;
     try {
-        initAudio();
-        osc.type = type;
-        osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
-        gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = frequency;
+        gain.gain.value = volume;
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
     } catch(e) {}
 }
 
 // Ball class
 class Ball {
-    constructor(x, y, r) {
+    constructor(x, y, r, vx = 0, vy = 0) {
         this.x = x;
         this.y = y;
         this.r = r;
-        this.vx = (Math.random() - 0.5) * 4;
-        this.vy = (Math.random() - 0.5) * 4;
-        this.mergeCooldown = 0;
-        this.splitTime = 0;
-        this.justSplitGroup = null;
-        this.explodeImmune = 30;
-        this.isMini = false;
+        this.vx = vx || (Math.random() - 0.5) * 4;
+        this.vy = vy || (Math.random() - 0.5) * 4;
         this.hue = Math.random() * 360;
-
-        this.trailHead = 0;
-        this.trail = new Array(10).fill(0).map(() => ({x: 0, y: 0}));
-        this.trail[0] = {x, y};
+        this.cooldown = 0;
+        this.splitGroup = -1;
+        this.splitTime = 0;
+        this.immune = 30;
+        this.isMini = false;
     }
 
-    move() {
+    move(width, height) {
         this.x += this.vx;
         this.y += this.vy;
 
         let bounced = false;
-        if (this.x - this.r < 0) { this.x = this.r; this.vx = Math.abs(this.vx) * 1.2; bounced = true; }
-        if (this.x + this.r > canvas.width) { this.x = canvas.width - this.r; this.vx = -Math.abs(this.vx) * 1.2; bounced = true; }
-        if (this.y - this.r < 0) { this.y = this.r; this.vy = Math.abs(this.vy) * 1.2; bounced = true; }
-        if (this.y + this.r > canvas.height) { this.y = canvas.height - this.r; this.vy = -Math.abs(this.vy) * 1.2; bounced = true; }
+        if (this.x - this.r < 0) { 
+            this.x = this.r; 
+            this.vx = Math.abs(this.vx) * 1.1; 
+            bounced = true; 
+        }
+        if (this.x + this.r > width) { 
+            this.x = width - this.r; 
+            this.vx = -Math.abs(this.vx) * 1.1; 
+            bounced = true; 
+        }
+        if (this.y - this.r < 0) { 
+            this.y = this.r; 
+            this.vy = Math.abs(this.vy) * 1.1; 
+            bounced = true; 
+        }
+        if (this.y + this.r > height) { 
+            this.y = height - this.r; 
+            this.vy = -Math.abs(this.vy) * 1.1; 
+            bounced = true; 
+        }
 
         if (bounced) {
-            this.vx *= 1.03;
-            this.vy *= 1.03;
+            this.vx *= 1.02;
+            this.vy *= 1.02;
         }
 
-        let speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-        this.hue = (this.hue + 3) % 360;
+        this.hue = (this.hue + 2) % 360;
+        if (this.cooldown > 0) this.cooldown--;
+        if (this.splitGroup >= 0) this.splitTime++;
+        if (this.immune > 0) this.immune--;
 
-        if (this.mergeCooldown > 0) this.mergeCooldown--;
-        if (this.justSplitGroup !== null) this.splitTime++;
-        if (this.explodeImmune > 0) this.explodeImmune--;
-
-        this.trailHead = (this.trailHead + 1) % 10;
-        this.trail[this.trailHead] = {x: this.x, y: this.y};
-
-        if (this.explodeImmune <= 0 && speed > 25 && !this.isMini) {
-            explodeBall(this);
+        if (this.immune <= 0 && !this.isMini) {
+            const speedSq = this.vx * this.vx + this.vy * this.vy;
+            if (speedSq > 625) return true;
         }
+        return false;
     }
 
     getColor() {
         const h = this.hue / 360;
-        const s = 1;
-        const l = 0.6;
-
-        const c = (1 - Math.abs(2 * l - 1)) * s;
+        const c = 1;
         const x = c * (1 - Math.abs((h * 6) % 2 - 1));
-        const m = l - c / 2;
 
         let r, g, b;
         if (h < 1/6) { r = c; g = x; b = 0; }
@@ -234,86 +241,94 @@ class Ball {
         else if (h < 5/6) { r = x; g = 0; b = c; }
         else { r = c; g = 0; b = x; }
 
-        return [(r + m), (g + m), (b + m)];
+        return [r, g, b];
     }
 }
 
-// Grid for spatial partitioning
-let GRID_SIZE = 12;
-let cellSize = Math.max(canvas.width, canvas.height) / GRID_SIZE;
-let grid = Array(GRID_SIZE * GRID_SIZE).fill().map(() => []);
+// Fixed spatial grid
+let GRID_SIZE = 16;
+let cellSize;
+let grid = [];
 
-function updateGrid() {
-    const target = Math.max(8, Math.min(24, Math.ceil(Math.sqrt(balls.length))));
-    if (target !== GRID_SIZE) {
-        GRID_SIZE = target;
-        cellSize = Math.max(canvas.width, canvas.height) / GRID_SIZE;
-        grid = Array(GRID_SIZE * GRID_SIZE).fill().map(() => []);
+function initGrid() {
+    cellSize = Math.max(canvas.width, canvas.height) / GRID_SIZE;
+    grid = [];
+    for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+        grid[i] = [];
     }
 }
 
-function mod(n, m) {
-    return ((n % m) + m) % m;
+function updateGridSize(ballCount) {
+    const newSize = Math.max(12, Math.min(32, Math.ceil(Math.sqrt(ballCount / 3))));
+    if (newSize !== GRID_SIZE) {
+        GRID_SIZE = newSize;
+        initGrid();
+    }
 }
 
 function getCell(x, y) {
-    const col = Math.floor(mod(x / cellSize, GRID_SIZE));
-    const row = Math.floor(mod(y / cellSize, GRID_SIZE));
-    return row * GRID_SIZE + col;
+    // Clamp coordinates to canvas bounds first
+    x = Math.max(0, Math.min(canvas.width - 1, x));
+    y = Math.max(0, Math.min(canvas.height - 1, y));
+
+    const col = Math.floor(x / cellSize);
+    const row = Math.floor(y / cellSize);
+
+    // Extra safety clamp on grid indices
+    const clampedCol = Math.max(0, Math.min(GRID_SIZE - 1, col));
+    const clampedRow = Math.max(0, Math.min(GRID_SIZE - 1, row));
+
+    return clampedRow * GRID_SIZE + clampedCol;
 }
 
-let balls = [];
+initGrid();
 
-function spawnBall(x, y, r = null, vx = 0, vy = 0, isMini = false) {
-    let b = new Ball(
-        x || Math.random() * canvas.width,
-        y || Math.random() * canvas.height,
-        r || 15 + Math.random() * 20
+let balls = [];
+let splitGroupCounter = 0;
+
+function spawnBall(x, y, r, vx, vy, isMini = false) {
+    const b = new Ball(
+        x ?? Math.random() * canvas.width,
+        y ?? Math.random() * canvas.height,
+        r ?? (15 + Math.random() * 20),
+        vx, vy
     );
-    b.vx = vx;
-    b.vy = vy;
     b.isMini = isMini;
-    b.explodeImmune = 30;
+    b.immune = 30;
     balls.push(b);
 }
 
 for (let i = 0; i < 10; i++) spawnBall();
 
 // Globals
-let gravityWell = {x: canvas.width / 2, y: canvas.height / 2, active: false, strength: 0.1};
-let trailsEnabled = true;
+let gravityWell = {x: canvas.width / 2, y: canvas.height / 2, active: false, strength: 0.08};
 let physicsTick = 0;
 
 document.addEventListener('keydown', e => {
     if (e.key === 'g' || e.key === 'G') {
         gravityWell.active = !gravityWell.active;
-        console.log('Gravity well:', gravityWell.active ? 'ON' : 'OFF');
-    }
-    if (e.key === 't' || e.key === 'T') {
-        trailsEnabled = !trailsEnabled;
-        console.log('Trails:', trailsEnabled ? 'ON' : 'OFF');
+        console.log('Gravity:', gravityWell.active ? 'ON' : 'OFF');
     }
     if (e.key === 'm' || e.key === 'M') {
         audioMuted = !audioMuted;
+        if (!audioMuted && !audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
         console.log('Audio:', audioMuted ? 'MUTED' : 'ON');
     }
     if (e.key === 'r' || e.key === 'R') {
-        // Reset all balls and trails
         balls = [];
         for (let i = 0; i < 10; i++) spawnBall();
-
-        // Clear the trails canvas
-        trailCtx.fillStyle = '#111';
-        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
         console.log('Reset to 10 balls');
     }
-    // Spawn 10 more balls with SPACE
     if (e.key === ' ') {
         e.preventDefault();
-        for (let i = 0; i < 10; i++) {
-            spawnBall(Math.random() * canvas.width, Math.random() * canvas.height);
+        // Warn if approaching limits
+        if (balls.length > 150000) {
+            console.warn('⚠️ Approaching device limits! Count:', balls.length);
         }
-        console.log('Spawned 10 more balls');
+        for (let i = 0; i < 100; i++) spawnBall();
+        console.log('Spawned 100 balls, total:', balls.length);
     }
 });
 
@@ -327,23 +342,20 @@ canvas.addEventListener('mousemove', e => {
 // Drag handling
 let isDragging = false;
 let startX = 0, startY = 0;
-let currentX = 0, currentY = 0;
 let draggedBall = null;
 
 canvas.addEventListener('mousedown', e => {
     e.preventDefault();
-    startX = currentX = e.clientX;
-    startY = currentY = e.clientY;
+    startX = e.clientX;
+    startY = e.clientY;
     isDragging = true;
     draggedBall = null;
 
     for (let b of balls) {
-        let dx = b.x - currentX, dy = b.y - currentY;
-        if (Math.sqrt(dx * dx + dy * dy) < b.r) {
+        const dx = b.x - startX, dy = b.y - startY;
+        if (dx*dx + dy*dy < b.r*b.r) {
             draggedBall = b;
-            b.vx = 0;
-            b.vy = 0;
-            b.explodeImmune = 30;
+            b.vx = 0; b.vy = 0; b.immune = 30;
             break;
         }
     }
@@ -352,29 +364,22 @@ canvas.addEventListener('mousedown', e => {
 canvas.addEventListener('mousemove', e => {
     if (!isDragging) return;
     e.preventDefault();
-    currentX = e.clientX;
-    currentY = e.clientY;
     if (draggedBall) {
-        draggedBall.x = currentX;
-        draggedBall.y = currentY;
-        draggedBall.vx = 0;
-        draggedBall.vy = 0;
+        draggedBall.x = e.clientX;
+        draggedBall.y = e.clientY;
     }
 });
 
 canvas.addEventListener('mouseup', e => {
     if (!isDragging) return;
     e.preventDefault();
-    let endX = currentX;
-    let endY = currentY;
-    let dx = endX - startX;
-    let dy = endY - startY;
-    let dist = Math.sqrt(dx * dx + dy * dy);
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
 
     if (draggedBall) {
         draggedBall.vx = dx / 10;
         draggedBall.vy = dy / 10;
-    } else if (dist > 10) {
+    } else if (dx*dx + dy*dy > 100) {
         spawnBall(startX, startY, 20, dx / 10, dy / 10);
     }
 
@@ -382,22 +387,20 @@ canvas.addEventListener('mouseup', e => {
     draggedBall = null;
 });
 
-// Touch events
+// Touch
 canvas.addEventListener('touchstart', e => {
     e.preventDefault();
-    let t = e.touches[0];
-    startX = currentX = t.clientX;
-    startY = currentY = t.clientY;
+    const t = e.touches[0];
+    startX = t.clientX;
+    startY = t.clientY;
     isDragging = true;
     draggedBall = null;
 
     for (let b of balls) {
-        let dx = b.x - currentX, dy = b.y - currentY;
-        if (Math.sqrt(dx * dx + dy * dy) < b.r) {
+        const dx = b.x - startX, dy = b.y - startY;
+        if (dx*dx + dy*dy < b.r*b.r) {
             draggedBall = b;
-            b.vx = 0;
-            b.vy = 0;
-            b.explodeImmune = 30;
+            b.vx = 0; b.vy = 0; b.immune = 30;
             break;
         }
     }
@@ -406,30 +409,23 @@ canvas.addEventListener('touchstart', e => {
 canvas.addEventListener('touchmove', e => {
     if (!isDragging) return;
     e.preventDefault();
-    let t = e.touches[0];
-    currentX = t.clientX;
-    currentY = t.clientY;
+    const t = e.touches[0];
     if (draggedBall) {
-        draggedBall.x = currentX;
-        draggedBall.y = currentY;
-        draggedBall.vx = 0;
-        draggedBall.vy = 0;
+        draggedBall.x = t.clientX;
+        draggedBall.y = t.clientY;
     }
 }, {passive: false});
 
 canvas.addEventListener('touchend', e => {
     if (!isDragging) return;
     e.preventDefault();
-    let endX = currentX;
-    let endY = currentY;
-    let dx = endX - startX;
-    let dy = endY - startY;
-    let dist = Math.sqrt(dx * dx + dy * dy);
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = e.changedTouches[0].clientY - startY;
 
     if (draggedBall) {
         draggedBall.vx = dx / 10;
         draggedBall.vy = dy / 10;
-    } else if (dist > 10) {
+    } else if (dx*dx + dy*dy > 100) {
         spawnBall(startX, startY, 20, dx / 10, dy / 10);
     }
 
@@ -437,323 +433,315 @@ canvas.addEventListener('touchend', e => {
     draggedBall = null;
 }, {passive: false});
 
-let splitGroupCounter = 0;
+function explodeBall(ball) {
+    playTone(440 + Math.random() * 440);
 
+    for (let i = 0; i < 3; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 10 + Math.random() * 5;
+        spawnBall(ball.x, ball.y, ball.r / 3, 
+            Math.cos(angle) * speed, 
+            Math.sin(angle) * speed, true);
+    }
+}
+
+// Optimized collision handling
 function handleCollisions() {
-    updateGrid();
-    grid.forEach(cell => cell.length = 0);
-    for (let b of balls) {
-        grid[getCell(b.x, b.y)].push(b);
+    const len = balls.length;
+    updateGridSize(len);
+
+    // Clear grid safely
+    for (let i = 0; i < grid.length; i++) {
+        grid[i].length = 0;
     }
 
-    const doOrbitsGravity = balls.length < 200 || physicsTick % 2 === 0;
+    // Populate grid with bounds checking
+    for (let i = 0; i < len; i++) {
+        const b = balls[i];
+        const cellIdx = getCell(b.x, b.y);
+        if (cellIdx >= 0 && cellIdx < grid.length) {
+            grid[cellIdx].push(i);
+        }
+    }
+
     physicsTick++;
 
-    if (doOrbitsGravity) {
-        // Orbits
-        const orbitFactor = 0.04;
-        for (let i = 0; i < balls.length; i++) {
-            let a = balls[i];
-            if (a.r < 10 || a.isMini) continue;
+    // At very high counts, reduce physics frequency more aggressively
+    const doExpensivePhysics = len < 5000 || (len < 50000 && physicsTick % 5 === 0) || physicsTick % 10 === 0;
 
-            const aCell = getCell(a.x, a.y);
-            const checkCells = [];
-            for (let dx = -1; dx <= 1; dx++) {
-                for (let dy = -1; dy <= 1; dy++) {
-                    let adj = (aCell + dx + dy * GRID_SIZE + GRID_SIZE * GRID_SIZE) % (GRID_SIZE * GRID_SIZE);
-                    checkCells.push(adj);
-                }
-            }
+    // Gravity well
+    if (doExpensivePhysics && gravityWell.active) {
+        const gx = gravityWell.x, gy = gravityWell.y;
+        const strength = gravityWell.strength;
 
-            for (let cell of checkCells) {
-                for (let other of grid[cell]) {
-                    if (other === a || other.r < 10 || other.isMini) continue;
-                    if (a.justSplitGroup !== null && other.justSplitGroup === a.justSplitGroup && a.splitTime < 120) continue;
+        for (let i = 0; i < len; i++) {
+            const b = balls[i];
+            if (b.isMini || b.r < 10) continue;
 
-                    let dx = other.x - a.x, dy = other.y - a.y;
-                    let distSq = dx * dx + dy * dy;
-                    if (distSq > 14400 || distSq === 0) continue;
+            const dx = gx - b.x, dy = gy - b.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > 40000 || distSq < 1) continue;
 
-                    let dist = Math.sqrt(distSq);
-                    let forceX = -dy / dist * orbitFactor;
-                    let forceY = dx / dist * orbitFactor;
-
-                    a.vx += forceX;
-                    a.vy += forceY;
-                    other.vx -= forceX * 0.5;
-                    other.vy -= forceY * 0.5;
-                }
-            }
-        }
-
-        // Gravity
-        if (gravityWell.active) {
-            const gStrengthBase = gravityWell.strength;
-            for (let b of balls) {
-                if (b.isMini || b.r < 10) continue;
-                let dx = gravityWell.x - b.x, dy = gravityWell.y - b.y;
-                let distSq = dx * dx + dy * dy;
-                if (distSq > 40000 || distSq === 0) continue;
-
-                let dist = Math.sqrt(distSq);
-                let accel = gStrengthBase / distSq;
-                b.vx += (dx / dist) * accel;
-                b.vy += (dy / dist) * accel;
-            }
+            const accel = strength / distSq;
+            const dist = Math.sqrt(distSq);
+            b.vx += (dx / dist) * accel;
+            b.vy += (dy / dist) * accel;
         }
     }
 
-    // Merges
-    for (let i = balls.length - 1; i >= 0; i--) {
-        let a = balls[i];
-        if (a.mergeCooldown > 0 || a.r < 5) continue;
+    // Merging - reduce frequency at extreme counts
+    const mergingInterval = len < 50000 ? 3 : 10;
+    if (physicsTick % mergingInterval === 0) {
+        const toRemove = new Set();
 
-        const aCell = getCell(a.x, a.y);
-        const checkCells = [];
-        for (let dx = -1; dx <= 1; dx++) {
-            for (let dy = -1; dy <= 1; dy++) {
-                let adj = (aCell + dx + dy * GRID_SIZE + GRID_SIZE * GRID_SIZE) % (GRID_SIZE * GRID_SIZE);
-                checkCells.push(adj);
-            }
-        }
+        for (let i = 0; i < len; i++) {
+            if (toRemove.has(i)) continue;
 
-        let merged = false;
-        for (let cell of checkCells) {
-            for (let j = grid[cell].length - 1; j >= 0; j--) {
-                let b = grid[cell][j];
-                if (b === a || b.mergeCooldown > 0 || b.r < 5) continue;
-                if (a.justSplitGroup !== null && b.justSplitGroup === a.justSplitGroup && a.splitTime < 120 && b.splitTime < 120) continue;
+            const a = balls[i];
+            if (a.cooldown > 0 || a.r < 5) continue;
 
-                let dx = b.x - a.x, dy = b.y - a.y;
-                let distSq = dx * dx + dy * dy;
-                if (distSq >= (a.r + b.r) ** 2) continue;
+            const cellIdx = getCell(a.x, a.y);
+            const row = Math.floor(cellIdx / GRID_SIZE);
+            const col = cellIdx % GRID_SIZE;
 
-                let dist = Math.sqrt(distSq);
-                if (dist < a.r + b.r) {
-                    let speedA = a.vx * a.vx + a.vy * a.vy;
-                    let speedB = b.vx * b.vx + b.vy * b.vy;
-                    let fastBall = speedA > speedB ? a : b;
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    const nr = row + dr;
+                    const nc = col + dc;
 
-                    a.r += b.r;
-                    a.vx = fastBall.vx * 1.04;
-                    a.vy = fastBall.vy * 1.04;
-                    a.mergeCooldown = 120;
+                    if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
 
-                    playTone(220 + Math.random() * 440, 0.1, 'square', 0.05);
+                    const checkCell = nr * GRID_SIZE + nc;
 
-                    const bGlobalIdx = balls.indexOf(b);
-                    if (bGlobalIdx > -1) {
-                        balls[bGlobalIdx] = balls[balls.length - 1];
-                        balls.pop();
-                        if (bGlobalIdx < i) i--;
+                    for (const j of grid[checkCell]) {
+                        if (j <= i || toRemove.has(j)) continue;
+
+                        const b = balls[j];
+                        if (b.cooldown > 0 || b.r < 5) continue;
+                        if (a.splitGroup >= 0 && b.splitGroup === a.splitGroup && 
+                            a.splitTime < 120 && b.splitTime < 120) continue;
+
+                        const dx = b.x - a.x, dy = b.y - a.y;
+                        const minDist = a.r + b.r;
+                        const distSq = dx * dx + dy * dy;
+
+                        if (distSq < minDist * minDist) {
+                            const speedA = a.vx * a.vx + a.vy * a.vy;
+                            const speedB = b.vx * b.vx + b.vy * b.vy;
+                            const fast = speedA > speedB ? a : b;
+
+                            a.r += b.r;
+                            a.vx = fast.vx * 1.03;
+                            a.vy = fast.vy * 1.03;
+                            a.cooldown = 100;
+
+                            toRemove.add(j);
+                            playTone(220 + Math.random() * 440, 0.05, 0.02);
+                            break;
+                        }
                     }
-                    merged = true;
-                    break;
                 }
             }
-            if (merged) break;
+        }
+
+        // Remove merged balls
+        if (toRemove.size > 0) {
+            const removeArray = Array.from(toRemove).sort((a, b) => b - a);
+            for (const idx of removeArray) {
+                balls[idx] = balls[balls.length - 1];
+                balls.pop();
+            }
         }
     }
 
-    // Splits
-    let newBalls = [];
+    // Split large balls
+    const newBalls = [];
     for (let i = balls.length - 1; i >= 0; i--) {
-        let b = balls[i];
-        if (b.r > 50 && b.mergeCooldown <= 0) {
-            let r = b.r / 2;
+        const b = balls[i];
+        if (b.r > 50 && b.cooldown <= 0) {
+            const r = b.r / 2;
             b.r = r;
-            b.mergeCooldown = 120;
+            b.cooldown = 100;
 
-            let angle = Math.random() * Math.PI * 2;
-            let speed = 8;
-            let vx1 = Math.cos(angle) * speed;
-            let vy1 = Math.sin(angle) * speed;
-            let vx2 = -vx1;
-            let vy2 = -vy1;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 7;
+            const groupId = splitGroupCounter++;
+            const offset = r * 1.2;
 
-            splitGroupCounter++;
-            let groupId = splitGroupCounter;
-            let offDist = r * 1.5;
+            const b1 = new Ball(
+                Math.max(r, Math.min(canvas.width - r, b.x + Math.cos(angle) * offset)),
+                Math.max(r, Math.min(canvas.height - r, b.y + Math.sin(angle) * offset)),
+                r,
+                Math.cos(angle) * speed,
+                Math.sin(angle) * speed
+            );
+            b1.splitGroup = groupId;
+            b1.splitTime = 0;
+            b1.immune = 30;
 
-            let b1x = Math.max(r, Math.min(canvas.width - r, b.x + vx1 / speed * offDist));
-            let b1y = Math.max(r, Math.min(canvas.height - r, b.y + vy1 / speed * offDist));
-            let b2x = Math.max(r, Math.min(canvas.width - r, b.x + vx2 / speed * offDist));
-            let b2y = Math.max(r, Math.min(canvas.height - r, b.y + vy2 / speed * offDist));
-
-            let b1 = new Ball(b1x, b1y, r);
-            b1.vx = vx1; b1.vy = vy1; b1.justSplitGroup = groupId; b1.splitTime = 0; b1.explodeImmune = 30;
-
-            let b2 = new Ball(b2x, b2y, r);
-            b2.vx = vx2; b2.vy = vy2; b2.justSplitGroup = groupId; b2.splitTime = 0; b2.explodeImmune = 30;
+            const b2 = new Ball(
+                Math.max(r, Math.min(canvas.width - r, b.x - Math.cos(angle) * offset)),
+                Math.max(r, Math.min(canvas.height - r, b.y - Math.sin(angle) * offset)),
+                r,
+                -Math.cos(angle) * speed,
+                -Math.sin(angle) * speed
+            );
+            b2.splitGroup = groupId;
+            b2.splitTime = 0;
+            b2.immune = 30;
 
             newBalls.push(b1, b2);
-            playTone(110 + Math.random() * 220, 0.15, 'sawtooth', 0.03);
-        }
-    }
-    balls.push(...newBalls);
-
-    // Cull - keep ball count manageable
-    if (balls.length > 30000) {
-        // Keep only the 3000 fastest balls (they have momentum)
-        balls.sort((a, b) => {
-            let speedA = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
-            let speedB = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-            return speedB - speedA;
-        });
-        balls.length = 3000;
-        console.log('Mass cull: reduced to 3000 fastest balls');
-    } else if (balls.length > 50) {
-        let cullCount = Math.min(5, balls.length - 40);
-        for (let i = 0; i < cullCount; i++) {
-            let idx = Math.floor(Math.random() * balls.length);
-            explodeBall(balls[idx]);
+            playTone(150 + Math.random() * 200, 0.1, 0.02);
         }
     }
 
-    document.getElementById('ballCount').textContent = balls.length;
-}
-
-function explodeBall(ball) {
-    playTone(440 + Math.random() * 440, 0.2, 'triangle', 0.04);
-
-    let miniCount = 4;
-    for (let i = 0; i < miniCount; i++) {
-        let angle = Math.random() * Math.PI * 2;
-        let speed = 10 + Math.random() * 6;
-        spawnBall(ball.x, ball.y, ball.r / 3, Math.cos(angle) * speed, Math.sin(angle) * speed, true);
+    if (newBalls.length > 0) {
+        balls.push(...newBalls);
     }
 
-    const idx = balls.indexOf(ball);
-    if (idx > -1) balls.splice(idx, 1);
+    // No culling - let it grow!
 }
 
-// Canvas 2D for trails - BELOW the balls
-const trailCanvas = document.createElement('canvas');
-const trailCtx = trailCanvas.getContext('2d');
-trailCanvas.width = canvas.width;
-trailCanvas.height = canvas.height;
-trailCanvas.style.position = 'absolute';
-trailCanvas.style.top = '0';
-trailCanvas.style.left = '0';
-trailCanvas.style.pointerEvents = 'none';
-trailCanvas.style.zIndex = '1'; // Trails BEHIND
-document.body.appendChild(trailCanvas);
+// Instanced rendering
+const instanceData = new Float32Array(MAX_BALLS * 3);
+const colorData = new Float32Array(MAX_BALLS * 3);
 
-// Position WebGL canvas for balls - ABOVE the trails
-canvas.style.position = 'absolute';
-canvas.style.top = '0';
-canvas.style.left = '0';
-canvas.style.zIndex = '5'; // Balls ON TOP
-
-// Render function
 function render() {
-    // Trails layer (BEHIND) - only fade if trails are enabled
-    if (trailsEnabled) {
-        trailCtx.fillStyle = 'rgba(17,17,17,0.1)';
-        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+    const totalBalls = balls.length;
 
-        if (balls.length < 25) {
-            for (let b of balls) {
-                if (b.r <= 15) continue;
-                let color = b.getColor();
-                trailCtx.strokeStyle = `rgb(${color[0]*255},${color[1]*255},${color[2]*255})`;
-                trailCtx.lineWidth = 2;
-                trailCtx.beginPath();
-                let head = b.trailHead;
-                for (let i = 0; i < 9; i++) {
-                    let idx1 = (head - i + 10) % 10;
-                    let idx2 = (head - i - 1 + 10) % 10;
-                    let pos1 = b.trail[idx1];
-                    let pos2 = b.trail[idx2];
-                    if (i === 0) trailCtx.moveTo(pos1.x, pos1.y);
-                    trailCtx.lineTo(pos2.x, pos2.y);
-                }
-                trailCtx.stroke();
-            }
+    // First pass: collect only visible balls
+    const visibleBalls = [];
+    for (let i = 0; i < totalBalls; i++) {
+        const b = balls[i];
+        // Check if ball is on screen (with small margin)
+        if (b.x + b.r >= 0 && b.x - b.r <= canvas.width &&
+            b.y + b.r >= 0 && b.y - b.r <= canvas.height) {
+            visibleBalls.push(b);
         }
-    } else {
-        // Clear trails when disabled
-        trailCtx.fillStyle = '#111';
-        trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
     }
 
-    // Balls layer (ON TOP) - clear and redraw completely fresh, with transparent background
-    gl.clearColor(0, 0, 0, 0); // Transparent so we see trails below
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    const len = Math.min(visibleBalls.length, MAX_BALLS);
 
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // Fill buffers with only visible balls
+    for (let i = 0; i < len; i++) {
+        const b = visibleBalls[i];
+        const color = b.getColor();
 
-    // Draw all balls fully opaque on top
-    for (let ball of balls) {
-        let color = ball.getColor();
-        gl.uniform2f(centerLoc, ball.x, ball.y);
-        gl.uniform1f(radiusLoc, ball.r);
-        gl.uniform3f(colorLoc, color[0], color[1], color[2]);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        const i3 = i * 3;
+        instanceData[i3] = b.x;
+        instanceData[i3 + 1] = b.y;
+        instanceData[i3 + 2] = b.r;
+
+        colorData[i3] = color[0];
+        colorData[i3 + 1] = color[1];
+        colorData[i3 + 2] = color[2];
+    }
+
+    try {
+        gl.clearColor(0.067, 0.067, 0.067, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.bindVertexArray(vao);
+
+        // Batch rendering to avoid iOS WebGL limits
+        const BATCH_SIZE = 50000;
+        const numBatches = Math.ceil(len / BATCH_SIZE);
+
+        for (let batch = 0; batch < numBatches; batch++) {
+            const start = batch * BATCH_SIZE;
+            const count = Math.min(BATCH_SIZE, len - start);
+
+            if (count <= 0) break;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData, start * 3, count * 3);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, colorData, start * 3, count * 3);
+
+            gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, count);
+        }
+
+        gl.bindVertexArray(null);
+
+        const error = gl.getError();
+        if (error !== gl.NO_ERROR) {
+            console.error('WebGL Error:', error, 'rendering', len, 'of', totalBalls, 'balls');
+        }
+    } catch(e) {
+        console.error('Render error:', e, 'at', totalBalls, 'balls');
     }
 }
 
-// Animation loop - simpler approach for consistent 60 FPS
-let lastTime = 0;
+// Game loop
+let lastTime = performance.now();
 let frameCount = 0;
-let fpsAccumulator = 0;
+let fpsTime = 0;
 
-function animate(time = 0) {
+function animate(currentTime) {
     requestAnimationFrame(animate);
 
-    if (!lastTime) lastTime = time;
-    let delta = time - lastTime;
+    const delta = currentTime - lastTime;
 
-    // Skip frame if delta is too large (tab was inactive)
-    if (delta > 100) {
-        lastTime = time;
+    if (delta > 200) {
+        lastTime = currentTime;
         return;
     }
 
-    lastTime = time;
-
-    // FPS counter
-    fpsAccumulator += delta;
     frameCount++;
+    fpsTime += delta;
 
-    if (fpsAccumulator >= 1000) {
-        let fps = Math.round(frameCount * 1000 / fpsAccumulator);
-        document.getElementById('fps').textContent = fps;
+    if (fpsTime >= 1000) {
+        document.getElementById('fps').textContent = Math.round(frameCount * 1000 / fpsTime);
         frameCount = 0;
-        fpsAccumulator = 0;
+        fpsTime = 0;
     }
 
-    // Physics and movement
+    lastTime = currentTime;
+
+    // Physics
     handleCollisions();
 
-    for (let b of balls) {
-        b.move();
+    // Handle exploding EVERY frame and update count immediately
+    const toExplode = [];
+    for (let i = 0; i < balls.length; i++) {
+        if (balls[i].move(canvas.width, canvas.height)) {
+            toExplode.push(i);
+        }
     }
 
-    // Render
+    // Explode balls and update count right away
+    for (let i = toExplode.length - 1; i >= 0; i--) {
+        explodeBall(balls[toExplode[i]]);
+        balls.splice(toExplode[i], 1);
+    }
+
+    // Update ball count immediately after explosions
+    document.getElementById('ballCount').textContent = balls.length;
+
     render();
 }
 
 window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    trailCanvas.width = canvas.width;
-    trailCanvas.height = canvas.height;
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
-    cellSize = Math.max(canvas.width, canvas.height) / GRID_SIZE;
+    initGrid();
 });
 
-animate();
+console.log('WebGL 2 Ready - Press SPACE for +100 balls!');
+animate(performance.now());
 </script>
 </body>
 </html>
 """
 
+
 @app.route('/')
 def index():
     return render_template_string(HTML)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
