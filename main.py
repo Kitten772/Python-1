@@ -644,22 +644,25 @@ function handleCollisions() {
     for (let i = ballCount - 1; i >= 0; i--) {
         if (ballR[i] > 35 && ballCooldown[i] <= 0) { // Lowered from 50 to 35 for more frequent splitting
             const r = ballR[i] / 3; // Smaller balls
-            const speed = 7;
+            const baseSpeed = 4.5; // Reduced from 7, with some variation
             const groupId = splitGroupCounter++;
             const offset = r * 1.5;
             const x = ballX[i];
             const y = ballY[i];
+            const parentVX = ballVX[i];
+            const parentVY = ballVY[i];
 
             // Create 6 balls at 60° intervals (π/3 radians)
             for (let j = 0; j < 6; j++) {
-                const angle = (j * Math.PI / 3); // 60° = π/3 radians
+                const angle = (j * Math.PI / 3) + (Math.random() - 0.5) * 0.2; // 60° intervals with slight randomness
+                const speed = baseSpeed + (Math.random() - 0.5) * 1.5; // Speed variation
 
                 spawnBall(
                     Math.max(r, Math.min(canvas.width - r, x + Math.cos(angle) * offset)),
                     Math.max(r, Math.min(canvas.height - r, y + Math.sin(angle) * offset)),
                     r, 
-                    Math.cos(angle) * speed, 
-                    Math.sin(angle) * speed
+                    Math.cos(angle) * speed + parentVX * 0.3, // Add some parent momentum
+                    Math.sin(angle) * speed + parentVY * 0.3
                 );
                 ballSplitGroup[ballCount - 1] = groupId;
                 ballImmune[ballCount - 1] = 30;
@@ -780,28 +783,47 @@ function animate(currentTime) {
         ballY[i] += ballVY[i];
 
         let bounced = false;
+        let bounceX = false;
+        let bounceY = false;
+
         if (ballX[i] - ballR[i] < 0) { 
             ballX[i] = ballR[i]; 
             ballVX[i] = Math.abs(ballVX[i]) * 1.1; 
-            bounced = true; 
+            bounced = true;
+            bounceX = true;
         }
         if (ballX[i] + ballR[i] > w) { 
             ballX[i] = w - ballR[i]; 
             ballVX[i] = -Math.abs(ballVX[i]) * 1.1; 
-            bounced = true; 
+            bounced = true;
+            bounceX = true;
         }
         if (ballY[i] - ballR[i] < 0) { 
             ballY[i] = ballR[i]; 
             ballVY[i] = Math.abs(ballVY[i]) * 1.1; 
-            bounced = true; 
+            bounced = true;
+            bounceY = true;
         }
         if (ballY[i] + ballR[i] > h) { 
             ballY[i] = h - ballR[i]; 
             ballVY[i] = -Math.abs(ballVY[i]) * 1.1; 
-            bounced = true; 
+            bounced = true;
+            bounceY = true;
         }
 
         if (bounced) {
+            // Add slight randomness to prevent corner-to-corner bouncing
+            const randomAngle = (Math.random() - 0.5) * 0.15; // ±4.3 degrees
+            const cos = Math.cos(randomAngle);
+            const sin = Math.sin(randomAngle);
+
+            // Rotate velocity slightly to break corner-to-corner pattern
+            const vx = ballVX[i];
+            const vy = ballVY[i];
+            ballVX[i] = vx * cos - vy * sin;
+            ballVY[i] = vx * sin + vy * cos;
+
+            // Speed boost
             ballVX[i] *= 1.02;
             ballVY[i] *= 1.02;
         }
