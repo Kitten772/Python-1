@@ -301,6 +301,7 @@ const ballIsMini = new Uint8Array(MAX_TOTAL);
 
 function spawnBall(x, y, r, vx, vy, isMini = false) {
     if (ballCount >= MAX_TOTAL) return;
+    if (ballCount < 0) ballCount = 0; // Safety check
 
     const i = ballCount++;
     ballX[i] = x ?? Math.random() * canvas.width;
@@ -319,6 +320,7 @@ function spawnBall(x, y, r, vx, vy, isMini = false) {
 for (let i = 0; i < 10; i++) spawnBall();
 
 function removeBall(i) {
+    if (ballCount <= 0 || i < 0 || i >= ballCount) return; // Safety check
     const last = ballCount - 1;
     if (i !== last) {
         ballX[i] = ballX[last];
@@ -334,6 +336,7 @@ function removeBall(i) {
         ballIsMini[i] = ballIsMini[last];
     }
     ballCount--;
+    if (ballCount < 0) ballCount = 0; // Prevent negative count
 }
 
 function hueToRGB(h) {
@@ -532,8 +535,9 @@ function handleCollisions() {
     const toRemove = [];
     const processedPairs = new Set();
 
-    for (let i = 0; i < ballCount; i++) {
-        if (ballCooldown[i] > 0 && ballR[i] < 5) continue;
+        for (let i = 0; i < ballCount; i++) {
+            // Skip only very small balls with cooldown (allow most balls to merge)
+            if (ballCooldown[i] > 0 && ballR[i] < 3) continue;
 
         const cellIdx = getCell(ballX[i], ballY[i]);
         const row = Math.floor(cellIdx / GRID_SIZE);
@@ -550,7 +554,8 @@ function handleCollisions() {
 
                 for (const j of grid[checkCell]) {
                     if (j <= i) continue;
-                    if (ballCooldown[j] > 0 && ballR[j] < 5) continue;
+                    // Skip only very small balls with cooldown (allow most balls to merge)
+                    if (ballCooldown[j] > 0 && ballR[j] < 3) continue;
 
                     // Avoid processing same pair twice
                     const pairKey = i < j ? `${i}-${j}` : `${j}-${i}`;
@@ -583,17 +588,17 @@ function handleCollisions() {
                         const speedA = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
                         const speedB = ballVX[j] * ballVX[j] + ballVY[j] * ballVY[j];
 
-                        // Mini balls merge more easily (they need to combine for growth)
+                        // All balls can merge - much more lenient conditions
                         const isMiniA = ballIsMini[i] || ballR[i] < 12;
                         const isMiniB = ballIsMini[j] || ballR[j] < 12;
 
                         let shouldMerge = false;
                         if (isMiniA || isMiniB) {
-                            // Mini balls can merge if speed < 200 (more lenient)
-                            shouldMerge = (speedA <= 200 && speedB <= 200);
+                            // Mini balls can merge if speed < 500 (very lenient)
+                            shouldMerge = (speedA <= 500 && speedB <= 500);
                         } else {
-                            // Regular balls merge if speed < 150 (more lenient than before)
-                            shouldMerge = (speedA <= 150 && speedB <= 150);
+                            // Regular balls merge if speed < 400 (very lenient)
+                            shouldMerge = (speedA <= 400 && speedB <= 400);
                         }
 
                         if (shouldMerge) {
@@ -601,7 +606,7 @@ function handleCollisions() {
                             ballR[i] += ballR[j];
                             ballVX[i] = ballVX[fast] * 1.03;
                             ballVY[i] = ballVY[fast] * 1.03;
-                            ballCooldown[i] = 100;
+                            ballCooldown[i] = 50; // Reduced cooldown for more merging
                             toRemove.push(j);
                             playTone(220 + Math.random() * 440, 0.05, 0.02);
                             continue;
@@ -635,14 +640,17 @@ function handleCollisions() {
         }
     }
 
-    toRemove.sort((a, b) => b - a);
-    for (const idx of toRemove) {
-        removeBall(idx);
+    // Remove duplicates and sort in descending order
+    const uniqueRemove = [...new Set(toRemove)].sort((a, b) => b - a);
+    for (const idx of uniqueRemove) {
+        if (idx >= 0 && idx < ballCount && ballCount > 0) {
+            removeBall(idx);
+        }
     }
 
-    // Splitting - creates 6 balls at 60° intervals (lower threshold for more splitting)
+    // Splitting - creates 6 balls at 60° intervals (all balls can split)
     for (let i = ballCount - 1; i >= 0; i--) {
-        if (ballR[i] > 35 && ballCooldown[i] <= 0) { // Lowered from 50 to 35 for more frequent splitting
+        if (ballR[i] > 20 && ballCooldown[i] <= 0) { // Lowered threshold so smaller balls can split
             const r = ballR[i] / 3; // Smaller balls
             const baseSpeed = 4.5; // Reduced from 7, with some variation
             const groupId = splitGroupCounter++;
@@ -833,15 +841,23 @@ function animate(currentTime) {
         if (ballSplitGroup[i] >= 0) ballSplitTime[i]++;
         if (ballImmune[i] > 0) ballImmune[i]--;
 
-        if (ballImmune[i] <= 0 && !ballIsMini[i]) {
+        // All balls can explode (removed mini ball restriction)
+        if (ballImmune[i] <= 0) {
             const speedSq = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
-            if (speedSq > 400) toExplode.push(i); // Lowered from 625 to 400 for more explosions (creates more balls)
+            // Cap explosion threshold to prevent too many simultaneous explosions
+            if (speedSq > 400 && speedSq < 10000) toExplode.push(i);
         }
     }
 
-    for (let i = toExplode.length - 1; i >= 0; i--) {
-        explodeBall(toExplode[i]);
-        removeBall(toExplode[i]);
+    // Sort indices in descending order and remove duplicates
+    const uniqueExplode = [...new Set(toExplode)].sort((a, b) => b - a);
+
+    for (let i = 0; i < uniqueExplode.length; i++) {
+        const idx = uniqueExplode[i];
+        if (idx >= 0 && idx < ballCount && ballCount > 0) {
+            explodeBall(idx);
+            removeBall(idx);
+        }
     }
 
     document.getElementById('ballCount').textContent = ballCount;
