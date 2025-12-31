@@ -528,8 +528,8 @@ function handleCollisions() {
         }
     }
 
-    // Merging - only when balls are close AND moving VERY slow (reduced frequency)
-    if (physicsTick % 20 === 0) {
+    // Merging - required for growth cycle (mini balls merge, regular balls merge when slow)
+    if (physicsTick % 8 === 0) {
         const toRemove = [];
 
         for (let i = 0; i < ballCount; i++) {
@@ -557,18 +557,27 @@ function handleCollisions() {
                         const minDist = ballR[i] + ballR[j];
 
                         if (dx*dx + dy*dy < minDist * minDist) {
-                            // Only merge if moving VERY slowly (much stricter threshold)
                             const speedA = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
                             const speedB = ballVX[j] * ballVX[j] + ballVY[j] * ballVY[j];
 
-                            if (speedA > 25 || speedB > 25) continue; // Much stricter - only merge very slow balls
+                            // Mini balls merge more easily (they need to combine for growth)
+                            const isMiniA = ballIsMini[i] || ballR[i] < 12;
+                            const isMiniB = ballIsMini[j] || ballR[j] < 12;
+
+                            if (isMiniA || isMiniB) {
+                                // Mini balls can merge if speed < 100 (more lenient)
+                                if (speedA > 100 || speedB > 100) continue;
+                            } else {
+                                // Regular balls only merge if very slow (speed < 50)
+                                if (speedA > 50 || speedB > 50) continue;
+                            }
 
                             const fast = speedA > speedB ? i : j;
 
                             ballR[i] += ballR[j];
                             ballVX[i] = ballVX[fast] * 1.03;
                             ballVY[i] = ballVY[fast] * 1.03;
-                            ballCooldown[i] = 300; // Longer merge cooldown
+                            ballCooldown[i] = 150; // Moderate cooldown
 
                             toRemove.push(j);
                             playTone(220 + Math.random() * 440, 0.05, 0.02);
