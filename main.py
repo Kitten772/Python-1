@@ -579,37 +579,35 @@ function handleCollisions() {
                         ballX[j] += separationX;
                         ballY[j] += separationY;
 
-                        // Check if we should merge (every 8 ticks)
-                        if (physicsTick % 8 === 0) {
-                            const speedA = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
-                            const speedB = ballVX[j] * ballVX[j] + ballVY[j] * ballVY[j];
+                        // Check if we should merge (on every collision)
+                        const speedA = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
+                        const speedB = ballVX[j] * ballVX[j] + ballVY[j] * ballVY[j];
 
-                            // Mini balls merge more easily (they need to combine for growth)
-                            const isMiniA = ballIsMini[i] || ballR[i] < 12;
-                            const isMiniB = ballIsMini[j] || ballR[j] < 12;
+                        // Mini balls merge more easily (they need to combine for growth)
+                        const isMiniA = ballIsMini[i] || ballR[i] < 12;
+                        const isMiniB = ballIsMini[j] || ballR[j] < 12;
 
-                            let shouldMerge = false;
-                            if (isMiniA || isMiniB) {
-                                // Mini balls can merge if speed < 100 (more lenient)
-                                shouldMerge = (speedA <= 100 && speedB <= 100);
-                            } else {
-                                // Regular balls only merge if very slow (speed < 50)
-                                shouldMerge = (speedA <= 50 && speedB <= 50);
-                            }
-
-                            if (shouldMerge) {
-                                const fast = speedA > speedB ? i : j;
-                                ballR[i] += ballR[j];
-                                ballVX[i] = ballVX[fast] * 1.03;
-                                ballVY[i] = ballVY[fast] * 1.03;
-                                ballCooldown[i] = 150;
-                                toRemove.push(j);
-                                playTone(220 + Math.random() * 440, 0.05, 0.02);
-                                continue;
-                            }
+                        let shouldMerge = false;
+                        if (isMiniA || isMiniB) {
+                            // Mini balls can merge if speed < 200 (more lenient)
+                            shouldMerge = (speedA <= 200 && speedB <= 200);
+                        } else {
+                            // Regular balls merge if speed < 150 (more lenient than before)
+                            shouldMerge = (speedA <= 150 && speedB <= 150);
                         }
 
-                        // Collision response (bounce) - elastic collision
+                        if (shouldMerge) {
+                            const fast = speedA > speedB ? i : j;
+                            ballR[i] += ballR[j];
+                            ballVX[i] = ballVX[fast] * 1.03;
+                            ballVY[i] = ballVY[fast] * 1.03;
+                            ballCooldown[i] = 100;
+                            toRemove.push(j);
+                            playTone(220 + Math.random() * 440, 0.05, 0.02);
+                            continue;
+                        }
+
+                        // Collision response (bounce) - elastic collision with speed increase
                         const nx = dx / dist;
                         const ny = dy / dist;
                         const relativeVx = ballVX[j] - ballVX[i];
@@ -623,14 +621,14 @@ function handleCollisions() {
                         const massJ = ballR[j] * ballR[j];
                         const totalMass = massI + massJ;
 
-                        // Elastic collision with some damping
+                        // Elastic collision with speed boost (1.05x multiplier)
                         const impulse = (2 * dotProduct) / totalMass;
-                        const damping = 0.95;
+                        const speedBoost = 1.05; // Balls speed up 5% on each bounce
 
-                        ballVX[i] += impulse * massJ * nx * damping;
-                        ballVY[i] += impulse * massJ * ny * damping;
-                        ballVX[j] -= impulse * massI * nx * damping;
-                        ballVY[j] -= impulse * massI * ny * damping;
+                        ballVX[i] += impulse * massJ * nx * speedBoost;
+                        ballVY[i] += impulse * massJ * ny * speedBoost;
+                        ballVX[j] -= impulse * massI * nx * speedBoost;
+                        ballVY[j] -= impulse * massI * ny * speedBoost;
                     }
                 }
             }
