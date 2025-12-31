@@ -528,35 +528,59 @@ function handleCollisions() {
         }
     }
 
-    // Merging - required for growth cycle (mini balls merge, regular balls merge when slow)
-    if (physicsTick % 8 === 0) {
-        const toRemove = [];
+    // Collision detection and response (every frame) + Merging check
+    const toRemove = [];
+    const processedPairs = new Set();
 
-        for (let i = 0; i < ballCount; i++) {
-            if (ballCooldown[i] > 0 || ballR[i] < 5) continue;
+    for (let i = 0; i < ballCount; i++) {
+        if (ballCooldown[i] > 0 && ballR[i] < 5) continue;
 
-            const cellIdx = getCell(ballX[i], ballY[i]);
-            const row = Math.floor(cellIdx / GRID_SIZE);
-            const col = cellIdx % GRID_SIZE;
+        const cellIdx = getCell(ballX[i], ballY[i]);
+        const row = Math.floor(cellIdx / GRID_SIZE);
+        const col = cellIdx % GRID_SIZE;
 
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
-                    const nr = row + dr;
-                    const nc = col + dc;
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                const nr = row + dr;
+                const nc = col + dc;
 
-                    if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
+                if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) continue;
 
-                    const checkCell = nr * GRID_SIZE + nc;
+                const checkCell = nr * GRID_SIZE + nc;
 
-                    for (const j of grid[checkCell]) {
-                        if (j <= i || ballCooldown[j] > 0 || ballR[j] < 5) continue;
-                        if (ballSplitGroup[i] >= 0 && ballSplitGroup[j] === ballSplitGroup[i] && 
-                            ballSplitTime[i] < 120 && ballSplitTime[j] < 120) continue;
+                for (const j of grid[checkCell]) {
+                    if (j <= i) continue;
+                    if (ballCooldown[j] > 0 && ballR[j] < 5) continue;
 
-                        const dx = ballX[j] - ballX[i], dy = ballY[j] - ballY[i];
-                        const minDist = ballR[i] + ballR[j];
+                    // Avoid processing same pair twice
+                    const pairKey = i < j ? `${i}-${j}` : `${j}-${i}`;
+                    if (processedPairs.has(pairKey)) continue;
+                    processedPairs.add(pairKey);
 
-                        if (dx*dx + dy*dy < minDist * minDist) {
+                    // Skip if same split group and recently split
+                    if (ballSplitGroup[i] >= 0 && ballSplitGroup[j] === ballSplitGroup[i] && 
+                        ballSplitTime[i] < 120 && ballSplitTime[j] < 120) continue;
+
+                    const dx = ballX[j] - ballX[i];
+                    const dy = ballY[j] - ballY[i];
+                    const distSq = dx * dx + dy * dy;
+                    const minDist = ballR[i] + ballR[j];
+                    const minDistSq = minDist * minDist;
+
+                    if (distSq < minDistSq && distSq > 0.01) {
+                        const dist = Math.sqrt(distSq);
+                        const overlap = minDist - dist;
+
+                        // Separate balls to prevent overlap
+                        const separationX = (dx / dist) * overlap * 0.5;
+                        const separationY = (dy / dist) * overlap * 0.5;
+                        ballX[i] -= separationX;
+                        ballY[i] -= separationY;
+                        ballX[j] += separationX;
+                        ballY[j] += separationY;
+
+                        // Check if we should merge (every 8 ticks)
+                        if (physicsTick % 8 === 0) {
                             const speedA = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
                             const speedB = ballVX[j] * ballVX[j] + ballVY[j] * ballVY[j];
 
@@ -564,34 +588,58 @@ function handleCollisions() {
                             const isMiniA = ballIsMini[i] || ballR[i] < 12;
                             const isMiniB = ballIsMini[j] || ballR[j] < 12;
 
+                            let shouldMerge = false;
                             if (isMiniA || isMiniB) {
                                 // Mini balls can merge if speed < 100 (more lenient)
-                                if (speedA > 100 || speedB > 100) continue;
+                                shouldMerge = (speedA <= 100 && speedB <= 100);
                             } else {
                                 // Regular balls only merge if very slow (speed < 50)
-                                if (speedA > 50 || speedB > 50) continue;
+                                shouldMerge = (speedA <= 50 && speedB <= 50);
                             }
 
-                            const fast = speedA > speedB ? i : j;
-
-                            ballR[i] += ballR[j];
-                            ballVX[i] = ballVX[fast] * 1.03;
-                            ballVY[i] = ballVY[fast] * 1.03;
-                            ballCooldown[i] = 150; // Moderate cooldown
-
-                            toRemove.push(j);
-                            playTone(220 + Math.random() * 440, 0.05, 0.02);
-                            break;
+                            if (shouldMerge) {
+                                const fast = speedA > speedB ? i : j;
+                                ballR[i] += ballR[j];
+                                ballVX[i] = ballVX[fast] * 1.03;
+                                ballVY[i] = ballVY[fast] * 1.03;
+                                ballCooldown[i] = 150;
+                                toRemove.push(j);
+                                playTone(220 + Math.random() * 440, 0.05, 0.02);
+                                continue;
+                            }
                         }
+
+                        // Collision response (bounce) - elastic collision
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        const relativeVx = ballVX[j] - ballVX[i];
+                        const relativeVy = ballVY[j] - ballVY[i];
+                        const dotProduct = relativeVx * nx + relativeVy * ny;
+
+                        if (dotProduct > 0) continue; // Already separating
+
+                        // Mass based on radius squared (area)
+                        const massI = ballR[i] * ballR[i];
+                        const massJ = ballR[j] * ballR[j];
+                        const totalMass = massI + massJ;
+
+                        // Elastic collision with some damping
+                        const impulse = (2 * dotProduct) / totalMass;
+                        const damping = 0.95;
+
+                        ballVX[i] += impulse * massJ * nx * damping;
+                        ballVY[i] += impulse * massJ * ny * damping;
+                        ballVX[j] -= impulse * massI * nx * damping;
+                        ballVY[j] -= impulse * massI * ny * damping;
                     }
                 }
             }
         }
+    }
 
-        toRemove.sort((a, b) => b - a);
-        for (const idx of toRemove) {
-            removeBall(idx);
-        }
+    toRemove.sort((a, b) => b - a);
+    for (const idx of toRemove) {
+        removeBall(idx);
     }
 
     // Splitting - creates 6 balls at 60° intervals (lower threshold for more splitting)
