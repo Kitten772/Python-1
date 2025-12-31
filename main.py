@@ -355,12 +355,18 @@ function hueToRGB(h) {
     return [r, g, b];
 }
 
-// Simplified grid
+// Adaptive grid - scales with ball count for performance
 let GRID_SIZE = 20;
 let cellSize;
 let grid = [];
 
 function initGrid() {
+    // Adaptive grid size based on ball count for optimal performance
+    if (ballCount < 1000) GRID_SIZE = 20;
+    else if (ballCount < 10000) GRID_SIZE = 40;
+    else if (ballCount < 100000) GRID_SIZE = 80;
+    else GRID_SIZE = 160; // For millions of balls
+
     cellSize = Math.max(canvas.width, canvas.height) / GRID_SIZE;
     grid = [];
     for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
@@ -500,44 +506,75 @@ function explodeBall(i) {
     }
 }
 
-// SUPER OPTIMIZED COLLISION
+// SUPER OPTIMIZED COLLISION - optimized for millions of balls
 function handleCollisions() {
+    // Recalculate grid size if needed
+    if (physicsTick % 60 === 0) {
+        initGrid();
+    }
+
     // Clear grid
     for (let i = 0; i < grid.length; i++) grid[i].length = 0;
 
-    // Populate
+    // Populate grid
     for (let i = 0; i < ballCount; i++) {
         grid[getCell(ballX[i], ballY[i])].push(i);
     }
 
     physicsTick++;
 
-    // Gravity - skip more aggressively
-    if (gravityWell.active && (ballCount < 10000 || physicsTick % 8 === 0)) {
+    // Gravity - skip more aggressively for large ball counts
+    const gravitySkip = ballCount > 100000 ? 32 : (ballCount > 10000 ? 16 : 8);
+    if (gravityWell.active && (ballCount < 10000 || physicsTick % gravitySkip === 0)) {
         const gx = gravityWell.x, gy = gravityWell.y;
         const strength = 0.08;
+        const maxDistSq = 40000;
 
-        for (let i = 0; i < ballCount; i++) {
-            if (ballIsMini[i] || ballR[i] < 10) continue;
+        // Process in chunks for large counts
+        const chunkSize = ballCount > 100000 ? 10000 : ballCount;
+        for (let chunk = 0; chunk < ballCount; chunk += chunkSize) {
+            const end = Math.min(chunk + chunkSize, ballCount);
+            for (let i = chunk; i < end; i++) {
+                if (ballIsMini[i] || ballR[i] < 10) continue;
 
-            const dx = gx - ballX[i], dy = gy - ballY[i];
-            const distSq = dx * dx + dy * dy;
-            if (distSq > 40000 || distSq < 1) continue;
+                const dx = gx - ballX[i], dy = gy - ballY[i];
+                const distSq = dx * dx + dy * dy;
+                if (distSq > maxDistSq || distSq < 1) continue;
 
-            const accel = strength / distSq;
-            const dist = Math.sqrt(distSq);
-            ballVX[i] += (dx / dist) * accel;
-            ballVY[i] += (dy / dist) * accel;
+                const accel = strength / distSq;
+                const dist = Math.sqrt(distSq);
+                ballVX[i] += (dx / dist) * accel;
+                ballVY[i] += (dy / dist) * accel;
+            }
         }
     }
 
-    // Collision detection and response (every frame) + Merging check
-    const toRemove = [];
-    const processedPairs = new Set();
+    // Collision detection - adaptive frequency based on ball count
+    const collisionSkip = ballCount > 100000 ? 3 : (ballCount > 10000 ? 2 : 1);
+    if (physicsTick % collisionSkip !== 0) return;
 
-        for (let i = 0; i < ballCount; i++) {
-            // Skip only very small balls with cooldown (allow most balls to merge)
-            if (ballCooldown[i] > 0 && ballR[i] < 3) continue;
+    const toRemove = [];
+    // Use bit array for processed pairs - much faster than Set for millions
+    const pairBits = new Uint8Array(Math.ceil((ballCount * ballCount) / 8));
+    const getPairBit = (i, j) => {
+        const idx = i < j ? i * ballCount + j : j * ballCount + i;
+        return (pairBits[Math.floor(idx / 8)] >> (idx % 8)) & 1;
+    };
+    const setPairBit = (i, j) => {
+        const idx = i < j ? i * ballCount + j : j * ballCount + i;
+        pairBits[Math.floor(idx / 8)] |= 1 << (idx % 8);
+    };
+
+    // Clear pair bits
+    pairBits.fill(0);
+
+    // Process collisions - limit checks for very large counts
+    const maxChecks = ballCount > 100000 ? 50000 : (ballCount > 10000 ? 20000 : ballCount);
+    let checksDone = 0;
+
+    for (let i = 0; i < ballCount && checksDone < maxChecks; i++) {
+        // Skip only very small balls with cooldown (allow most balls to merge)
+        if (ballCooldown[i] > 0 && ballR[i] < 3) continue;
 
         const cellIdx = getCell(ballX[i], ballY[i]);
         const row = Math.floor(cellIdx / GRID_SIZE);
@@ -553,14 +590,15 @@ function handleCollisions() {
                 const checkCell = nr * GRID_SIZE + nc;
 
                 for (const j of grid[checkCell]) {
-                    if (j <= i) continue;
+                    if (j <= i || checksDone >= maxChecks) continue;
+                    checksDone++;
+
                     // Skip only very small balls with cooldown (allow most balls to merge)
                     if (ballCooldown[j] > 0 && ballR[j] < 3) continue;
 
                     // Avoid processing same pair twice
-                    const pairKey = i < j ? `${i}-${j}` : `${j}-${i}`;
-                    if (processedPairs.has(pairKey)) continue;
-                    processedPairs.add(pairKey);
+                    if (getPairBit(i, j)) continue;
+                    setPairBit(i, j);
 
                     // Skip if same split group and recently split
                     if (ballSplitGroup[i] >= 0 && ballSplitGroup[j] === ballSplitGroup[i] && 
@@ -649,8 +687,11 @@ function handleCollisions() {
     }
 
     // Splitting - creates 6 balls at 60° intervals (all balls can split)
-    for (let i = ballCount - 1; i >= 0; i--) {
-        if (ballR[i] > 20 && ballCooldown[i] <= 0) { // Lowered threshold so smaller balls can split
+    // Skip splitting check for very large counts to save performance
+    const splitCheckSkip = ballCount > 100000 ? 10 : (ballCount > 10000 ? 5 : 1);
+    if (physicsTick % splitCheckSkip === 0) {
+        for (let i = ballCount - 1; i >= 0; i--) {
+            if (ballR[i] > 20 && ballCooldown[i] <= 0) { // Lowered threshold so smaller balls can split
             const r = ballR[i] / 3; // Smaller balls
             const baseSpeed = 4.5; // Reduced from 7, with some variation
             const groupId = splitGroupCounter++;
@@ -679,9 +720,9 @@ function handleCollisions() {
             // Remove the original ball
             removeBall(i);
             playTone(150 + Math.random() * 200, 0.1, 0.02);
+            }
         }
     }
-}
 
 const renderInstanceData = new Float32Array(MAX_BALLS * 3);
 const renderColorData = new Float32Array(MAX_BALLS * 3);
@@ -689,10 +730,11 @@ const renderColorData = new Float32Array(MAX_BALLS * 3);
 function render() {
     let renderCount = 0;
 
-    // Frustum culling
-    for (let i = 0; i < ballCount; i++) {
-        if (renderCount >= MAX_BALLS) break;
+    // Frustum culling with LOD (Level of Detail) for millions
+    const renderStep = ballCount > 100000 ? 2 : (ballCount > 50000 ? 1 : 1);
+    const maxRender = ballCount > 100000 ? 200000 : MAX_BALLS;
 
+    for (let i = 0; i < ballCount && renderCount < maxRender; i += renderStep) {
         const x = ballX[i], y = ballY[i], r = ballR[i];
         if (x + r >= 0 && x - r <= canvas.width && y + r >= 0 && y - r <= canvas.height) {
             const color = hueToRGB(ballHue[i]);
@@ -836,7 +878,10 @@ function animate(currentTime) {
             ballVY[i] *= 1.02;
         }
 
-        ballHue[i] = (ballHue[i] + 2) % 360;
+        // Skip hue update for very large counts (visual only)
+        if (ballCount < 100000 || i % 10 === 0) {
+            ballHue[i] = (ballHue[i] + 2) % 360;
+        }
         if (ballCooldown[i] > 0) ballCooldown[i]--;
         if (ballSplitGroup[i] >= 0) ballSplitTime[i]++;
         if (ballImmune[i] > 0) ballImmune[i]--;
