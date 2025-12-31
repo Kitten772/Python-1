@@ -489,7 +489,8 @@ function explodeBall(i) {
 
     const x = ballX[i], y = ballY[i], r = ballR[i];
 
-    for (let j = 0; j < 3; j++) {
+    // Create more balls on explosion for exponential growth
+    for (let j = 0; j < 5; j++) { // Increased from 3 to 5 balls per explosion
         const angle = Math.random() * Math.PI * 2;
         const speed = 10 + Math.random() * 5;
         spawnBall(x, y, r / 3, Math.cos(angle) * speed, Math.sin(angle) * speed, true);
@@ -527,8 +528,8 @@ function handleCollisions() {
         }
     }
 
-    // Merging - much less frequent
-    if (physicsTick % 5 === 0) {
+    // Merging - only when balls are close AND moving VERY slow (reduced frequency)
+    if (physicsTick % 20 === 0) {
         const toRemove = [];
 
         for (let i = 0; i < ballCount; i++) {
@@ -556,14 +557,18 @@ function handleCollisions() {
                         const minDist = ballR[i] + ballR[j];
 
                         if (dx*dx + dy*dy < minDist * minDist) {
+                            // Only merge if moving VERY slowly (much stricter threshold)
                             const speedA = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
                             const speedB = ballVX[j] * ballVX[j] + ballVY[j] * ballVY[j];
+
+                            if (speedA > 25 || speedB > 25) continue; // Much stricter - only merge very slow balls
+
                             const fast = speedA > speedB ? i : j;
 
                             ballR[i] += ballR[j];
                             ballVX[i] = ballVX[fast] * 1.03;
                             ballVY[i] = ballVY[fast] * 1.03;
-                            ballCooldown[i] = 100;
+                            ballCooldown[i] = 300; // Longer merge cooldown
 
                             toRemove.push(j);
                             playTone(220 + Math.random() * 440, 0.05, 0.02);
@@ -580,34 +585,33 @@ function handleCollisions() {
         }
     }
 
-    // Splitting
+    // Splitting - creates 6 balls at 60° intervals (lower threshold for more splitting)
     for (let i = ballCount - 1; i >= 0; i--) {
-        if (ballR[i] > 50 && ballCooldown[i] <= 0) {
-            const r = ballR[i] / 2;
-            ballR[i] = r;
-            ballCooldown[i] = 100;
-
-            const angle = Math.random() * Math.PI * 2;
+        if (ballR[i] > 35 && ballCooldown[i] <= 0) { // Lowered from 50 to 35 for more frequent splitting
+            const r = ballR[i] / 3; // Smaller balls
             const speed = 7;
             const groupId = splitGroupCounter++;
-            const offset = r * 1.2;
+            const offset = r * 1.5;
+            const x = ballX[i];
+            const y = ballY[i];
 
-            spawnBall(
-                Math.max(r, Math.min(canvas.width - r, ballX[i] + Math.cos(angle) * offset)),
-                Math.max(r, Math.min(canvas.height - r, ballY[i] + Math.sin(angle) * offset)),
-                r, Math.cos(angle) * speed, Math.sin(angle) * speed
-            );
-            ballSplitGroup[ballCount - 1] = groupId;
-            ballImmune[ballCount - 1] = 30;
+            // Create 6 balls at 60° intervals (π/3 radians)
+            for (let j = 0; j < 6; j++) {
+                const angle = (j * Math.PI / 3); // 60° = π/3 radians
 
-            spawnBall(
-                Math.max(r, Math.min(canvas.width - r, ballX[i] - Math.cos(angle) * offset)),
-                Math.max(r, Math.min(canvas.height - r, ballY[i] - Math.sin(angle) * offset)),
-                r, -Math.cos(angle) * speed, -Math.sin(angle) * speed
-            );
-            ballSplitGroup[ballCount - 1] = groupId;
-            ballImmune[ballCount - 1] = 30;
+                spawnBall(
+                    Math.max(r, Math.min(canvas.width - r, x + Math.cos(angle) * offset)),
+                    Math.max(r, Math.min(canvas.height - r, y + Math.sin(angle) * offset)),
+                    r, 
+                    Math.cos(angle) * speed, 
+                    Math.sin(angle) * speed
+                );
+                ballSplitGroup[ballCount - 1] = groupId;
+                ballImmune[ballCount - 1] = 30;
+            }
 
+            // Remove the original ball
+            removeBall(i);
             playTone(150 + Math.random() * 200, 0.1, 0.02);
         }
     }
@@ -754,7 +758,7 @@ function animate(currentTime) {
 
         if (ballImmune[i] <= 0 && !ballIsMini[i]) {
             const speedSq = ballVX[i] * ballVX[i] + ballVY[i] * ballVY[i];
-            if (speedSq > 625) toExplode.push(i);
+            if (speedSq > 400) toExplode.push(i); // Lowered from 625 to 400 for more explosions (creates more balls)
         }
     }
 
@@ -776,7 +780,7 @@ window.addEventListener('resize', () => {
     initGrid();
 });
 
-console.log('Ultra-optimized + President modes! Press O for Obama (thicc), T for Trump! 🇺🇸');
+console.log('Ultra-optimized + 6-ball hexagon split! Press O for Obama (thicc), T for Trump! 🇺🇸');
 animate(performance.now());
 </script>
 </body>
