@@ -1,4 +1,3 @@
-
 from flask import Flask, Response
 
 app = Flask(__name__)
@@ -10,7 +9,7 @@ def home():
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Chaos Merge System</title>
+<title>Chaos Rainbow System</title>
 <style>
 html,body{
     margin:0;
@@ -27,7 +26,7 @@ canvas{display:block;}
     font-family:Arial;
     font-weight:bold;
     font-size:14px;
-    color:#00ff00;
+    color:#ffffff;
     user-select:none;
 }
 .button{ margin:0 10px; cursor:pointer; }
@@ -65,22 +64,29 @@ function resize(){
 resize();
 window.onresize = resize;
 
-// -------------------- CONFIG --------------------
+// ---------------- CONFIG ----------------
+const START_BALLS = 10;
 const BASE_R = 22;
-const MERGE_CHANCE = 0.12;     // makes merging rare
+const MERGE_CHANCE = 0.12;
 const BOUNCE_GAIN = 1.15;
-const SPLIT_DELAY_MIN = 1000;
-const SPLIT_DELAY_MAX = 5000;
+const SPLIT_MIN = 1000;
+const SPLIT_MAX = 5000;
 const EXPLODE_PARTS = 10;
-const NET_GAIN = 2;            // ensures +2 total balls
-const MERGE_GRACE = 700;       // prevents instant remerge
+const NET_GAIN = 2;
+const MERGE_GRACE = 700;
 const MAX_R = 75;
-// ------------------------------------------------
+const SWIPE_MULT = 1.0;
+const MAX_SWIPE_SPEED = 2200;
+const CORNER_THRESHOLD = 40;
+// ----------------------------------------
 
 let balls = [];
 let nextId = 0;
 let globalTexture = null;
 let blackHole = false;
+
+let swipeStart = null;
+let swipeTime = 0;
 
 // Images
 const obamaImg = new Image();
@@ -89,18 +95,20 @@ obamaImg.src = "https://upload.wikimedia.org/wikipedia/commons/8/8d/President_Ba
 const trumpImg = new Image();
 trumpImg.src = "https://upload.wikimedia.org/wikipedia/commons/5/56/Donald_Trump_official_portrait.jpg";
 
-// Ball factory
-function spawn(x,y,vx,vy,r=BASE_R){
+function spawn(x,y,vx,vy,r=BASE_R,chaos=false){
     balls.push({
         id: nextId++,
         x,y,vx,vy,r,
         splitAt:null,
-        noMergeUntil:0
+        noMergeUntil:0,
+        chaos:chaos,
+        hue:Math.random()*360
     });
 }
 
-// initial 10 balls
-for(let i=0;i<10;i++){
+function rand(a,b){ return Math.random()*(b-a)+a; }
+
+for(let i=0;i<START_BALLS;i++){
     spawn(
         Math.random()*canvas.width,
         Math.random()*canvas.height,
@@ -112,33 +120,68 @@ for(let i=0;i<10;i++){
 function update(dt){
     const now = performance.now();
 
-    // movement
     for(let b of balls){
 
         if(blackHole){
             let dx = canvas.width/2 - b.x;
             let dy = canvas.height/2 - b.y;
-            b.vx += dx * 0.4 * dt;
-            b.vy += dy * 0.4 * dt;
+            b.vx += dx * 0.5 * dt;
+            b.vy += dy * 0.5 * dt;
         }
 
-        b.x += b.vx*dt;
-        b.y += b.vy*dt;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
 
-        let bounced=false;
+        let bounced = false;
 
-        if(b.x<b.r){b.x=b.r;b.vx*=-1;bounced=true;}
-        if(b.x>canvas.width-b.r){b.x=canvas.width-b.r;b.vx*=-1;bounced=true;}
-        if(b.y<b.r){b.y=b.r;b.vy*=-1;bounced=true;}
-        if(b.y>canvas.height-b.r){b.y=canvas.height-b.r;b.vy*=-1;bounced=true;}
+        if(b.x < b.r){ b.x = b.r; b.vx *= -1; bounced = true; }
+        if(b.x > canvas.width - b.r){ b.x = canvas.width - b.r; b.vx *= -1; bounced = true; }
+        if(b.y < b.r){ b.y = b.r; b.vy *= -1; bounced = true; }
+        if(b.y > canvas.height - b.r){ b.y = canvas.height - b.r; b.vy *= -1; bounced = true; }
 
         if(bounced){
-            b.vx*=BOUNCE_GAIN;
-            b.vy*=BOUNCE_GAIN;
+            b.vx *= BOUNCE_GAIN;
+            b.vy *= BOUNCE_GAIN;
         }
+
+        // corner explosion trigger
+        if(!b.chaos){
+            let nearLeft = b.x < CORNER_THRESHOLD;
+            let nearRight = b.x > canvas.width - CORNER_THRESHOLD;
+            let nearTop = b.y < CORNER_THRESHOLD;
+            let nearBottom = b.y > canvas.height - CORNER_THRESHOLD;
+
+            if((nearLeft && nearTop) ||
+               (nearRight && nearTop) ||
+               (nearLeft && nearBottom) ||
+               (nearRight && nearBottom)){
+
+                createChaosBall(b);
+                balls = balls.filter(ball => ball.id !== b.id);
+                break;
+            }
+        }
+
+        b.hue += 200 * dt;
+        if(b.hue > 360) b.hue -= 360;
     }
 
-    // -------- MERGING (rare) --------
+    handleMerge(now);
+    handleSplit(now);
+}
+
+function createChaosBall(source){
+    spawn(
+        canvas.width/2,
+        canvas.height/2,
+        (Math.random()-0.5)*1200,
+        (Math.random()-0.5)*1200,
+        120,
+        true
+    );
+}
+
+function handleMerge(now){
     let removed = new Set();
     let created = [];
 
@@ -149,24 +192,26 @@ function update(dt){
             if(removed.has(j)) continue;
 
             let a=balls[i], b=balls[j];
-
-            if(now<a.noMergeUntil || now<b.noMergeUntil) continue;
+            if(a.chaos || b.chaos) continue;
+            if(now < a.noMergeUntil || now < b.noMergeUntil) continue;
 
             let dx=a.x-b.x;
             let dy=a.y-b.y;
             let dist=Math.hypot(dx,dy);
 
-            if(dist<a.r+b.r && Math.random()<MERGE_CHANCE){
+            if(dist < a.r + b.r && Math.random() < MERGE_CHANCE){
 
                 let merged={
-                    id:nextId++,
+                    id: nextId++,
                     x:(a.x+b.x)/2,
                     y:(a.y+b.y)/2,
                     vx:(a.vx+b.vx)/2,
                     vy:(a.vy+b.vy)/2,
-                    r:Math.sqrt(a.r*a.r+b.r*b.r),
-                    splitAt:now+rand(SPLIT_DELAY_MIN,SPLIT_DELAY_MAX),
-                    noMergeUntil:now+MERGE_GRACE
+                    r:Math.sqrt(a.r*a.r + b.r*b.r),
+                    splitAt: now + rand(SPLIT_MIN, SPLIT_MAX),
+                    noMergeUntil: now + MERGE_GRACE,
+                    chaos:false,
+                    hue:Math.random()*360
                 };
 
                 created.push(merged);
@@ -178,12 +223,13 @@ function update(dt){
     }
 
     balls = balls.filter((_,i)=>!removed.has(i)).concat(created);
+}
 
-    // -------- SPLITTING (explosion) --------
+function handleSplit(now){
     let next=[];
 
     for(let b of balls){
-        if((b.splitAt && now>=b.splitAt) || b.r>MAX_R){
+        if(!b.chaos && ((b.splitAt && now>=b.splitAt) || b.r > MAX_R)){
 
             let count = EXPLODE_PARTS + NET_GAIN;
 
@@ -192,28 +238,27 @@ function update(dt){
                 let sp=200+Math.random()*200;
 
                 next.push({
-                    id:nextId++,
+                    id: nextId++,
                     x:b.x,
                     y:b.y,
-                    vx:b.vx+Math.cos(ang)*sp,
-                    vy:b.vy+Math.sin(ang)*sp,
+                    vx:b.vx + Math.cos(ang)*sp,
+                    vy:b.vy + Math.sin(ang)*sp,
                     r:BASE_R,
                     splitAt:null,
-                    noMergeUntil:now+MERGE_GRACE
+                    noMergeUntil: now + MERGE_GRACE,
+                    chaos:false,
+                    hue:Math.random()*360
                 });
             }
 
-        }else{
+        } else {
             next.push(b);
         }
     }
 
-    balls=next;
+    balls = next;
 }
 
-function rand(a,b){ return Math.random()*(b-a)+a; }
-
-// -------- RENDER --------
 function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
@@ -227,36 +272,64 @@ function draw(){
             ctx.drawImage(globalTexture,b.x-b.r,b.y-b.r,b.r*2,b.r*2);
             ctx.restore();
         }else{
-            ctx.fillStyle="lime";
+            ctx.fillStyle = "hsl(" + b.hue + ",100%,50%)";
             ctx.fill();
         }
     }
 
-    document.getElementById("counter").innerText="Balls: "+balls.length;
+    document.getElementById("counter").innerText="Balls: " + balls.length;
 }
 
-// -------- LOOP --------
 let last=performance.now();
 function loop(now){
     let dt=(now-last)/1000;
     last=now;
-
     update(dt);
     draw();
-
     requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-// spawn on click
-canvas.onclick=e=>{
-    spawn(e.clientX,e.clientY,
-        (Math.random()-0.5)*600,
-        (Math.random()-0.5)*600
-    );
-};
+function handleRelease(x,y){
+    if(!swipeStart) return;
 
-// buttons
+    let dx = x - swipeStart.x;
+    let dy = y - swipeStart.y;
+    let dt = (performance.now() - swipeTime)/1000;
+    if(dt <= 0) dt = 0.001;
+
+    let vx = (dx/dt) * SWIPE_MULT;
+    let vy = (dy/dt) * SWIPE_MULT;
+
+    let speed = Math.hypot(vx,vy);
+    if(speed > MAX_SWIPE_SPEED){
+        let scale = MAX_SWIPE_SPEED / speed;
+        vx *= scale;
+        vy *= scale;
+    }
+
+    spawn(swipeStart.x, swipeStart.y, vx, vy);
+    swipeStart = null;
+}
+
+canvas.addEventListener("mousedown", e=>{
+    swipeStart = {x:e.clientX, y:e.clientY};
+    swipeTime = performance.now();
+});
+canvas.addEventListener("mouseup", e=>{
+    handleRelease(e.clientX, e.clientY);
+});
+
+canvas.addEventListener("touchstart", e=>{
+    let t=e.touches[0];
+    swipeStart = {x:t.clientX, y:t.clientY};
+    swipeTime = performance.now();
+});
+canvas.addEventListener("touchend", e=>{
+    let t=e.changedTouches[0];
+    handleRelease(t.clientX, t.clientY);
+});
+
 normalBtn.onclick=()=>globalTexture=null;
 obamaBtn.onclick=()=>globalTexture=obamaImg;
 trumpBtn.onclick=()=>globalTexture=trumpImg;
